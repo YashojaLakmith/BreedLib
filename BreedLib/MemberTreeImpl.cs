@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace BreedLib
@@ -15,7 +16,13 @@ namespace BreedLib
 
         internal MemberTreeImpl(MemberTreeImpl<T> memberTree)
         {
-            _adjList = memberTree._adjList;
+            if(memberTree._comparer is null)
+            {
+                _adjList = new Dictionary<T, List<T>>(memberTree._adjList);
+                return;
+            }
+
+            _adjList = new Dictionary<T, List<T>>(memberTree._adjList, memberTree._comparer);
             _comparer = memberTree._comparer;
         }
 
@@ -23,17 +30,6 @@ namespace BreedLib
         {
             _comparer = comparer;
             _adjList = new Dictionary<T, List<T>>(_comparer);
-        }
-
-        internal MemberTreeImpl(Dictionary<T, List<T>> adjList)
-        {
-            _adjList = adjList;
-        }
-
-        private MemberTreeImpl(Dictionary<T, List<T>> adjList, IEqualityComparer<T> comparer)
-        {
-            _adjList = adjList;
-            _comparer = comparer;
         }
 
         public int Count { get => _adjList.Count; }
@@ -46,24 +42,24 @@ namespace BreedLib
                 return;
             }
 
-            throw new InvalidOperationException();
+            throw new InvalidOperationException(@"Given member does not exist.");
         }
 
         public void AddMember(T member, Parents<T> parents)
         {
             if (!Exists(parents.Parent1))
             {
-                throw new InvalidOperationException();
+                throw new InvalidOperationException(@"Given first parent does not exist.");
             }
 
             if (!Exists(parents.Parent2))
             {
-                throw new InvalidOperationException();
+                throw new InvalidOperationException(@"Given second parent does not exist.");
             }
 
             if (Exists(member))
             {
-                throw new InvalidOperationException();
+                throw new InvalidOperationException(@"Given member does not exist.");
             }
 
 
@@ -76,23 +72,15 @@ namespace BreedLib
         {
             if (!Exists(parents.Parent1))
             {
-                throw new InvalidOperationException();
+                throw new InvalidOperationException(@"Given first parent does not exist.");
             }
 
             if (!Exists(parents.Parent2))
             {
-                throw new InvalidOperationException();
+                throw new InvalidOperationException(@"Given second parent does not exist.");
             }
 
-            Parents<T>? current;
-            try
-            {
-                current = GetParents(member);
-            }
-            catch (InvalidOperationException)
-            {
-                throw;
-            }
+            Parents<T>? current = GetParents(member);
 
             if(!(current is null))
             {
@@ -107,12 +95,12 @@ namespace BreedLib
             {
                 if (IsChild(member, parents.Parent1))
                 {
-                    throw new InvalidOperationException();
+                    throw new InvalidOperationException(@"Given member and its first parent create a cycle.");
                 }
 
                 if (IsChild(member, parents.Parent2))
                 {
-                    throw new InvalidOperationException();
+                    throw new InvalidOperationException(@"Given member and its second parent create a cycle.");
                 }
             }
             catch (InvalidOperationException)
@@ -133,7 +121,9 @@ namespace BreedLib
         public void RemoveMember(T member)
         {
             var parents = GetParents(member);
+            var children = new List<T>(_adjList[member]);
             _adjList.Remove(member);
+            RemoveParentsOfImmediateChildren(children);
 
             if(parents is null)
             {
@@ -150,7 +140,12 @@ namespace BreedLib
         }
 
         public Parents<T>? GetParents(T member)
-        { 
+        {
+            if (!_adjList.ContainsKey(member))
+            {
+                throw new InvalidOperationException(@"Given member does not exist.");
+            }
+
             var visited = CreateHashSet();
             var vertices = CreateQueue();
             var parents = new List<T>();
@@ -203,6 +198,11 @@ namespace BreedLib
 
         public IEnumerable<T> GetAllAncestors(T member)
         {
+            if (!Exists(member))
+            {
+                throw new InvalidOperationException(@"Given member does not exist.");
+            }
+
             var ancestors = CreateHashSet();
             var explored = CreateHashSet();
 
@@ -218,7 +218,7 @@ namespace BreedLib
         {
             if (!Exists(member))
             {
-                throw new InvalidOperationException();
+                throw new InvalidOperationException(@"Given member does not exist.");
             }
 
             var visited = CreateHashSet();
@@ -243,26 +243,16 @@ namespace BreedLib
             return visited;
         }
 
-        public IMemberTree<T>? GetAncestorGraph(T member)
-        {
-            throw new NotImplementedException();
-        }
-
-        public IMemberTree<T> GetChildrenGraph(T member)
-        {
-            throw new NotImplementedException();
-        }
-
         public bool IsChild(T member, T child)
         {
             if (!Exists(member))
             {
-                throw new InvalidOperationException();
+                throw new InvalidOperationException(@"Given member does not exist.");
             }
 
             if (!Exists(child))
             {
-                throw new InvalidOperationException();
+                throw new InvalidOperationException(@"Given child member does not exist.");
             }
 
             var visited = CreateHashSet();
@@ -289,6 +279,28 @@ namespace BreedLib
             }
 
             return false;
+        }
+
+        public void RemoveParents(T member)
+        {
+            Parents<T>? parents = GetParents(member);
+            if (parents is null)
+            {
+                return;
+            }
+
+            Remove(_adjList[parents.Value.Parent1], member);
+            Remove(_adjList[parents.Value.Parent2], member);
+        }
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            return new MemberTreeEnumerator<T>(_adjList.Keys);
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
         }
 
         private Parents<T>? GetParents(List<T> parents)
@@ -338,6 +350,57 @@ namespace BreedLib
         private HashSet<T> CreateHashSet()
         {
             return _comparer is null ? new HashSet<T>() : new HashSet<T>(_comparer);
+        }
+
+        private void RemoveParentsOfImmediateChildren(IEnumerable<T> children)
+        {
+            var visited = CreateHashSet();
+            var vertices = CreateQueue();
+
+            foreach(var child in children)
+            {
+                visited.Add(child);
+            }
+
+            foreach(var vertex in _adjList)
+            {
+                if (!visited.Add(vertex.Key))
+                {
+                    continue;
+                }
+                vertices.Enqueue(vertex.Key);
+
+                while(vertices.Count > 0)
+                {
+                    var item = vertices.Dequeue();
+                    if (!visited.Add(item))
+                    {
+                        continue;
+                    }
+
+                    var indexes = new List<int>();
+                    var i = 0;
+
+                    foreach(var neighbour in _adjList[item])
+                    {
+                        if(Contains(children, neighbour))
+                        {
+                            indexes.Add(i);
+                            continue;
+                        }
+                        else
+                        {
+                            vertices.Enqueue(neighbour);
+                        }                        
+                        i++;
+                    }
+
+                    foreach(var idx in indexes)
+                    {
+                        _adjList[item].RemoveAt(idx);
+                    }
+                }
+            }
         }
 
         private bool Equals(T x, T y)

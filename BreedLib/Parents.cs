@@ -1,5 +1,8 @@
 ﻿namespace BreedLib
 {
+    /// <summary>
+    /// Represents the parents of a member item.
+    /// </summary>
     public readonly struct Parents<T> where T : notnull
     {
         public readonly T Parent1;
